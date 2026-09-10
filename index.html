@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Pendragon Maximization System</title>
+
+  <!-- iOS & PWA Meta Tags -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Pendragon">
+  <meta name="theme-color" content="#000000">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="icon" type="image/png" href="icon-192.png">
+
+  <!-- Fonts: Authentic Gothic (UnifrakturMaguntia + Grenze Gotisch + Pirata One) + Cyber (Orbitron) & UI (Outfit) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Grenze+Gotisch:wght@600;700;800;900&family=Orbitron:wght@600;800;900&family=Outfit:wght@400;600&family=Pirata+One&family=UnifrakturMaguntia&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Ambient Blood Rain Canvas (Chuva de Sangue no Fundo 100% Preto) -->
+  <canvas id="ambientCanvas"></canvas>
+
+  <div class="app-container">
+    <!-- Top Cyber-HUD Telemetry -->
+    <div class="cyber-hud-bar">
+      <span class="hud-glitch-text">// PROTOCOLO: INFERNO | NEURAL SYNC: 1000X</span>
+      <span class="hud-status-badge"><span class="pulse-dot"></span> ATIVO</span>
+    </div>
+
+    <!-- Header -->
+    <header class="app-header">
+      <div class="logo-group">
+        <div class="logo-icon-cyber">
+          <div class="cyber-corners"></div>
+          <img src="assets/anime-blood-square.gif" alt="Vampire Blood" class="header-ankh" id="headerLogoImg">
+        </div>
+        <div class="title-meta-wrap">
+          <h1 class="app-title">PENDRAGON</h1>
+          <span class="app-title-sub">MAXIMIZATION SYSTEM</span>
+          <span class="app-subtitle" id="statusBadge">// RESSONÂNCIA: LOOP_INFINITO 🩸</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="btnInfo" class="icon-btn cyber-btn-icon" aria-label="Instruções" title="Instruções">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Cyber-Vampiric Player -->
+    <main class="player-main">
+      <!-- Tech Corner Brackets -->
+      <div class="tech-corner tl"></div>
+      <div class="tech-corner tr"></div>
+      <div class="tech-corner bl"></div>
+      <div class="tech-corner br"></div>
+
+      <!-- Cybernetic Radiestesia Vortex Visualizer -->
+      <div class="visualizer-wrapper">
+        <!-- Decágono Sagrado de Radiestesia (10 Lados para Materialização & Purificação) -->
+        <svg class="decagono-sagrado" viewBox="0 0 220 220" id="decagonoSvg">
+          <defs>
+            <filter id="glowDecagon" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="2.5" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+          </defs>
+          <!-- Outer Decagon (R=104) -->
+          <polygon class="decagon-outer" points="110,6 171.1,25.9 208.9,77.9 208.9,142.1 171.1,194.1 110,214 48.9,194.1 11.1,142.1 11.1,77.9 48.9,25.9" />
+          <!-- Inner Decagon (R=86) -->
+          <polygon class="decagon-inner" points="110,24 160.6,40.4 191.8,83.4 191.8,136.6 160.6,179.6 110,196 59.4,179.6 28.2,136.6 28.2,83.4 59.4,40.4" />
+          <!-- 10 Ray Lines to Center Aperture -->
+          <line class="decagon-ray" x1="110" y1="6" x2="110" y2="45" />
+          <line class="decagon-ray" x1="171.1" y1="25.9" x2="148" y2="58" />
+          <line class="decagon-ray" x1="208.9" y1="77.9" x2="170" y2="92" />
+          <line class="decagon-ray" x1="208.9" y1="142.1" x2="170" y2="128" />
+          <line class="decagon-ray" x1="171.1" y1="194.1" x2="148" y2="162" />
+          <line class="decagon-ray" x1="110" y1="214" x2="110" y2="175" />
+          <line class="decagon-ray" x1="48.9" y1="194.1" x2="72" y2="162" />
+          <line class="decagon-ray" x1="11.1" y1="142.1" x2="50" y2="128" />
+          <line class="decagon-ray" x1="11.1" y1="77.9" x2="50" y2="92" />
+          <line class="decagon-ray" x1="48.9" y1="25.9" x2="72" y2="58" />
+        </svg>
+
+        <!-- Gráfico do Turbilhão (Rodando no sentido horário + pulsando em vermelho neon) -->
+        <div class="turbilhao-rotator" id="turbilhaoRotator">
+          <img src="assets/turbilhao_red_pure.png" alt="Gráfico Turbilhão Radiestesia" class="turbilhao-img" id="turbilhaoImg">
+        </div>
+
+        <!-- Anel de Testemunho & Intenção em Órbita Circular Dextrógira (Sentido Horário) -->
+        <div class="witness-ring-rotator" id="witnessRingRotator">
+          <svg class="witness-ring-svg" viewBox="0 0 220 220">
+            <defs>
+              <path id="witnessCirclePath" d="M 110, 110 m -69, 0 a 69,69 0 1,1 138,0 a 69,69 0 1,1 -138,0" />
+            </defs>
+            <text class="witness-circular-text">
+              <textPath href="#witnessCirclePath" startOffset="0%" id="witnessTextPath"></textPath>
+            </text>
+          </svg>
+        </div>
+
+        <div class="aura-rings" id="auraRings">
+          <div class="ring ring-cyber ring-3"></div>
+          <div class="ring ring-cyber ring-2"></div>
+          <div class="ring ring-cyber ring-1"></div>
+        </div>
+
+        <!-- Center Crimson Core with Anime Blood Gif Centered on Tongue -->
+        <div class="artwork-disc" id="artworkDisc">
+          <div class="cyber-scanline"></div>
+          <div class="disc-blood-glow"></div>
+          <img src="assets/anime-blood-square.gif" alt="Vampire Licking Blood" class="vampire-center-gif" id="vampireCenterImg">
+          
+          <!-- Blood Equalizer Waves -->
+          <div class="frequency-bars" id="frequencyBars">
+            <span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Current Track Details -->
+      <div class="track-details">
+        <div class="track-badge" id="trackIndexBadge">FAIXA [ 0 / 0 ]</div>
+        <h2 class="track-title" id="trackTitle">NENHUM RITUAL CARREGADO</h2>
+        <p class="track-meta" id="trackMeta">// SELECIONE SEUS ÁUDIOS ABAIXO</p>
+      </div>
+
+      <!-- Cyber Neon Progress Slider -->
+      <div class="progress-section">
+        <div class="progress-bar-container" id="progressBarContainer">
+          <div class="progress-bar-fill" id="progressBarFill"></div>
+          <div class="progress-thumb" id="progressThumb"></div>
+        </div>
+        <div class="time-display">
+          <span id="currentTime">00:00</span>
+          <span id="totalDuration">00:00</span>
+        </div>
+      </div>
+
+      <!-- Main Controls -->
+      <div class="controls-main">
+        <button id="btnPrev" class="ctrl-btn secondary-btn" aria-label="Faixa anterior" title="Anterior">
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/>
+          </svg>
+        </button>
+
+        <button id="btnPlayPause" class="ctrl-btn play-btn" aria-label="Executar ou Pausar" title="Invocar">
+          <svg id="iconPlay" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M8 5v14l11-7z"/>
+          </svg>
+          <svg id="iconPause" class="hidden" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+          </svg>
+        </button>
+
+        <button id="btnNext" class="ctrl-btn secondary-btn" aria-label="Próxima faixa" title="Próxima">
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="m6 18 8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Quick Options: Loop, Testemunho & Timer -->
+      <div class="quick-options">
+        <button id="btnLoopMode" class="chip-btn active" title="Alternar modo de repetição">
+          <span class="chip-icon" id="loopIcon">🔁</span>
+          <span class="chip-text" id="loopText">LOOP INFINITO</span>
+        </button>
+
+        <button id="btnTestemunho" class="chip-btn" title="Configurar Testemunho & Intenção Radiônica">
+          <span class="chip-icon">🔯</span>
+          <span class="chip-text" id="witnessBtnLabel">TESTEMUNHO</span>
+        </button>
+
+        <button id="btnSleepTimer" class="chip-btn" title="Definir temporizador para desligar">
+          <span class="chip-icon">🩸</span>
+          <span class="chip-text" id="timerText">TIMER: OFF</span>
+        </button>
+      </div>
+    </main>
+
+    <!-- Playlist Section -->
+    <section class="playlist-section" id="playlistSection">
+      <div class="tech-corner tl"></div>
+      <div class="tech-corner tr"></div>
+      <div class="tech-corner bl"></div>
+      <div class="tech-corner br"></div>
+
+      <div class="section-header">
+        <div class="section-title-wrap">
+          <h3 class="section-title">FREQUÊNCIAS</h3>
+          <span class="tracks-counter" id="tracksCount">0 RITUAIS ATIVOS</span>
+        </div>
+        <div class="playlist-header-actions">
+          <button id="btnTogglePlaylist" class="btn-toggle-playlist" title="Recolher / Expandir Frequências">
+            <span id="togglePlaylistText">RECOLHER</span>
+            <span id="togglePlaylistIcon">▲</span>
+          </button>
+          <label for="fileInput" class="btn-add-files" title="Adicionar novos arquivos de áudio">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            <span>INJETAR</span>
+          </label>
+        </div>
+        <input type="file" id="fileInput" accept="audio/*,.mp3,.m4a,.wav,.aac,.ogg,.flac" multiple class="visually-hidden">
+      </div>
+
+      <div class="playlist-container" id="playlistContainer">
+        <!-- Dynamic items -->
+        <div class="empty-state" id="emptyState">
+          <div class="empty-icon-blood">🩸</div>
+          <p class="empty-title">NENHUM RITUAL ATIVO</p>
+          <p class="empty-desc">Toque em <strong>INJETAR</strong> para subir áudios do seu iPhone ou carregue a trilogia principal:</p>
+          <button id="btnLoadDemo" class="btn-demo-cyber">
+            🩸 ATIVAR TRILOGIA: VLAD / GØD / PUNK [1000X]
+          </button>
+          <p class="empty-subdesc">// MEMÓRIA LOCAL: FUNCIONA 100% OFFLINE COM TELA APAGADA</p>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Sleep Timer Modal -->
+  <div class="sheet-overlay" id="timerModal">
+    <div class="sheet-card">
+      <div class="sheet-handle"></div>
+      <h3 class="sheet-title">⏱️ TEMPORIZADOR DE HIBERNAÇÃO</h3>
+      <p class="sheet-desc">// DESVANECIMENTO GRADUAL DE VOLUME NOS ÚLTIMOS 30 SEGUNDOS</p>
+      
+      <div class="timer-options-grid">
+        <button class="timer-option-btn active" data-minutes="0">
+          <span class="timer-label">ETERNIDADE</span>
+          <span class="timer-sub">Loop infinito sem desligar</span>
+        </button>
+        <button class="timer-option-btn" data-minutes="30">
+          <span class="timer-label">30 MINUTOS</span>
+          <span class="timer-sub">Indução inicial ao sono</span>
+        </button>
+        <button class="timer-option-btn" data-minutes="60">
+          <span class="timer-label">1 HORA</span>
+          <span class="timer-sub">Reprogramação profunda</span>
+        </button>
+        <button class="timer-option-btn" data-minutes="120">
+          <span class="timer-label">2 HORAS</span>
+          <span class="timer-sub">Ciclo neural completo</span>
+        </button>
+        <button class="timer-option-btn" data-minutes="240">
+          <span class="timer-label">4 HORAS</span>
+          <span class="timer-sub">Sono estendido</span>
+        </button>
+        <button class="timer-option-btn" data-minutes="480">
+          <span class="timer-label">8 HORAS</span>
+          <span class="timer-sub">Ressonância até o amanhecer</span>
+        </button>
+      </div>
+
+      <button id="btnCloseTimer" class="sheet-close-btn">CONFIRMAR PROTOCOLO</button>
+    </div>
+  </div>
+
+  <!-- Testemunho & Intenção Radiônica Modal -->
+  <div class="sheet-overlay" id="testemunhoModal">
+    <div class="sheet-card">
+      <div class="sheet-handle"></div>
+      <h3 class="sheet-title">🔯 TESTEMUNHO & INTENÇÃO RADIÔNICA</h3>
+      <p class="sheet-desc">// GRAVAÇÃO VIBRACIONAL NO ANEL DO TURBILHÃO COM DECÁGONO</p>
+
+      <div class="testemunho-input-group">
+        <label for="inputWitnessText" class="testemunho-label">COMANDO / TESTEMUNHO DO RITUAL:</label>
+        <input type="text" id="inputWitnessText" class="testemunho-input" maxlength="75" placeholder="Ex: SEU NOME // ATIVAÇÃO VAMPÍRICA 1000X">
+      </div>
+
+      <div class="testemunho-presets">
+        <p class="presets-title">SUGESTÕES RÁPIDAS DE INTENÇÃO:</p>
+        <div class="presets-chips">
+          <button class="preset-chip" data-text="TRANSMUTAÇÃO VAMPÍRICA 1000X // ATIVA NO DNA">🧛‍♂️ Transmutação Vampírica</button>
+          <button class="preset-chip" data-text="REGENERAÇÃO CELULAR SUPREMA & VITALIDADE">⚡ Regeneração & Vitalidade</button>
+          <button class="preset-chip" data-text="HIPERMAGNETISMO & PODER DA VONTADE 100X">🔮 Magnetismo Alpha</button>
+          <button class="preset-chip" data-text="DESBLOQUEIO ENERGÉTICO & MATERIALIZAÇÃO">🌀 Materialização Rápida</button>
+        </div>
+      </div>
+
+      <div class="sheet-btn-row">
+        <button id="btnSaveWitness" class="sheet-close-btn">GRAVAR NO VÓRTICE ⚡</button>
+        <button id="btnClearWitness" class="sheet-secondary-btn">RESTAURAR PADRÃO</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Instructions Modal -->
+  <div class="sheet-overlay" id="infoModal">
+    <div class="sheet-card">
+      <div class="sheet-handle"></div>
+      <h3 class="sheet-title">📱 PROTOCOLO IPHONE // SEGUNDO PLANO</h3>
+      
+      <div class="guide-steps">
+        <div class="guide-step">
+          <div class="step-num">01</div>
+          <div class="step-content">
+            <h4>INSTALAR COMO WEB-APP</h4>
+            <p>No Safari, toque no ícone <strong>Compartilhar</strong> (quadrado com seta para cima) e escolha <strong>"Adicionar à Tela de Início"</strong>. Ele vira um app independente na sua tela.</p>
+          </div>
+        </div>
+
+        <div class="guide-step">
+          <div class="step-num">02</div>
+          <div class="step-content">
+            <h4>TELA APAGADA / BLOQUEADA</h4>
+            <p>Dê Play e pode apagar a tela. A MediaSession nativa da Apple mantém o áudio ressoando em loop eterno sem interrupções.</p>
+          </div>
+        </div>
+
+        <div class="guide-step">
+          <div class="step-num">03</div>
+          <div class="step-content">
+            <h4>AMPLIFICAÇÃO RADIÔNICA</h4>
+            <p>O gráfico do <strong>Turbilhão com Decágono Sagrado</strong> amplifica a frequência do áudio em tempo real. Toque em <strong>TESTEMUNHO</strong> para sintonizar sua intenção pessoal no vórtice!</p>
+          </div>
+        </div>
+      </div>
+
+      <button id="btnCloseInfo" class="sheet-close-btn">CONCLUIR</button>
+    </div>
+  </div>
+
+  <!-- Hidden Native Audio Engine -->
+  <audio id="audioPlayer" playsinline preload="auto"></audio>
+
+  <script src="app.js"></script>
+</body>
+</html>
