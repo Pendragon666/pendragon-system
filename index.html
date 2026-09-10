@@ -178,8 +178,8 @@
       <!-- Quick Options: Loop, Testemunho & Timer -->
       <div class="quick-options">
         <button id="btnLoopMode" class="chip-btn active" title="Alternar modo de repetição">
-          <span class="chip-icon" id="loopIcon">🔁</span>
-          <span class="chip-text" id="loopText">LOOP INFINITO</span>
+          <span class="chip-icon" id="loopIcon">🔂</span>
+          <span class="chip-text" id="loopText">LOOP FAIXA</span>
         </button>
 
         <button id="btnTestemunho" class="chip-btn" title="Configurar Testemunho & Intenção Radiônica">
@@ -340,8 +340,8 @@
     </div>
   </div>
 
-  <!-- Hidden Native Audio Engine -->
-  <audio id="audioPlayer" playsinline preload="auto"></audio>
+  <!-- Hidden Native Audio Engine with iOS Background Attributes -->
+  <audio id="audioPlayer" playsinline webkit-playsinline="true" x-webkit-airplay="allow" preload="auto" loop></audio>
 
   <script src="app.js"></script>
 </body>

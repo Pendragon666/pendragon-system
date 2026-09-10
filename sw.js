@@ -1,4 +1,4 @@
-const CACHE_NAME = 'biokinesis-cache-v1';
+const CACHE_NAME = 'pendragon-system-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -7,6 +7,7 @@ const ASSETS = [
   './manifest.json',
   './icon-192.png',
   './icon-512.png',
+  './icon.svg',
   './Frequencia_432Hz_Harmonia.wav',
   './Frequencia_528Hz_Regeneracao.wav'
 ];

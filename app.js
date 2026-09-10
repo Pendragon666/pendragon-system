@@ -94,7 +94,7 @@ let playlist = [];
 let currentIndex = -1;
 let currentBlobUrl = null;
 let isPlaying = false;
-let loopMode = 'playlist'; // 'playlist' (loop all) | 'single' (loop one)
+let loopMode = 'single'; // 'single' (infinite loop per track) | 'playlist' (loop all)
 let sleepTimerMinutes = 0;
 let sleepTimerInterval = null;
 let sleepTargetTime = null;
@@ -162,16 +162,26 @@ function loadTrack(index, autoPlay = false) {
     URL.revokeObjectURL(currentBlobUrl);
   }
 
-  currentBlobUrl = URL.createObjectURL(track.blob);
+  // Ensure valid audio MIME type for iOS Safari AVPlayer
+  let trackBlob = track.blob;
+  if (trackBlob && (!trackBlob.type || trackBlob.type === '')) {
+    trackBlob = new Blob([trackBlob], { type: track.type || 'audio/mpeg' });
+  }
+
+  currentBlobUrl = URL.createObjectURL(trackBlob);
   audioPlayer.src = currentBlobUrl;
   audioPlayer.volume = 1.0;
+
+  // Crucial iOS hardware loop: AVPlayer handles single track repetition in CoreAudio without JS
+  audioPlayer.loop = (loopMode === 'single' || playlist.length === 1);
+  audioPlayer.load();
 
   // UI Updates
   const cleanName = cleanFileName(track.name);
   trackTitle.textContent = cleanName;
   trackMeta.textContent = formatFileSize(track.size);
   trackIndexBadge.textContent = `Faixa ${currentIndex + 1} de ${playlist.length}`;
-  statusBadge.textContent = isPlaying ? 'Reproduzindo em Loop' : 'Pronto para tocar';
+  statusBadge.textContent = isPlaying ? (audioPlayer.loop ? 'Loop Faixa 🔂' : 'Loop Playlist 🔁') : 'Pronto para tocar';
 
   renderPlaylistUI();
 
@@ -195,7 +205,7 @@ function setPlayState(playing) {
     iconPause.classList.remove('hidden');
     visualizerDisc.classList.add('playing');
     document.querySelector('.visualizer-wrapper').classList.add('playing');
-    statusBadge.textContent = loopMode === 'playlist' ? 'Loop Playlist 🔁' : 'Loop Faixa 🔂';
+    statusBadge.textContent = (loopMode === 'single' || playlist.length === 1) ? 'Loop Faixa 🔂' : 'Loop Playlist 🔁';
   } else {
     iconPlay.classList.remove('hidden');
     iconPause.classList.add('hidden');
@@ -213,23 +223,33 @@ function setPlayState(playing) {
 function updateMediaSession(title) {
   if (!('mediaSession' in navigator)) return;
 
-  navigator.mediaSession.metadata = new MediaMetadata({
-    title: title,
-    artist: 'Pendragon Maximization System',
-    album: 'Pendragon Maximization System',
-    artwork: [
-      { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
-      { src: 'icon-192.png', sizes: '192x192', type: 'image/png' }
-    ]
-  });
+  const baseHref = window.location.href.split('?')[0].split('#')[0].replace(/\/[^\/]*$/, '/');
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: title || 'Pendragon Maximization System',
+      artist: 'Pendragon Maximization System',
+      album: 'Pendragon Biokinesis Loop',
+      artwork: [
+        { src: baseHref + 'icon-512.png', sizes: '512x512', type: 'image/png' },
+        { src: baseHref + 'icon-192.png', sizes: '192x192', type: 'image/png' }
+      ]
+    });
+  } catch (e) {
+    console.warn("MediaSession metadata warning:", e);
+  }
 
   navigator.mediaSession.setActionHandler('play', () => {
-    audioPlayer.play();
-    setPlayState(true);
+    audioPlayer.play().then(() => setPlayState(true)).catch(() => {});
   });
 
   navigator.mediaSession.setActionHandler('pause', () => {
     audioPlayer.pause();
+    setPlayState(false);
+  });
+
+  navigator.mediaSession.setActionHandler('stop', () => {
+    audioPlayer.pause();
+    audioPlayer.currentTime = 0;
     setPlayState(false);
   });
 
@@ -238,29 +258,69 @@ function updateMediaSession(title) {
 
   try {
     navigator.mediaSession.setActionHandler('seekto', (details) => {
-      if (details.seekTime && audioPlayer.duration) {
+      if (details.seekTime !== undefined && details.seekTime !== null && audioPlayer.duration) {
         audioPlayer.currentTime = details.seekTime;
+        updateMediaSessionPosition();
       }
     });
     navigator.mediaSession.setActionHandler('seekbackward', (details) => {
       audioPlayer.currentTime = Math.max(0, audioPlayer.currentTime - (details.seekOffset || 10));
+      updateMediaSessionPosition();
     });
     navigator.mediaSession.setActionHandler('seekforward', (details) => {
       audioPlayer.currentTime = Math.min(audioPlayer.duration, audioPlayer.currentTime + (details.seekOffset || 10));
+      updateMediaSessionPosition();
     });
   } catch (e) {
     // Alguns navegadores ignoram seek
   }
 }
 
-// --- iOS Continuous Seamless Loop ---
+function updateMediaSessionPosition() {
+  if ('mediaSession' in navigator && 'setPositionState' in navigator.mediaSession) {
+    if (audioPlayer.duration && !isNaN(audioPlayer.duration) && isFinite(audioPlayer.duration)) {
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: Math.max(0.1, audioPlayer.duration),
+          playbackRate: audioPlayer.playbackRate || 1,
+          position: Math.min(Math.max(0, audioPlayer.currentTime), audioPlayer.duration)
+        });
+      } catch (e) {}
+    }
+  }
+}
+
+// Native audio listeners for 100% lockscreen / headphones hardware button sync
+audioPlayer.addEventListener('play', () => {
+  setPlayState(true);
+  updateMediaSessionPosition();
+});
+
+audioPlayer.addEventListener('pause', () => {
+  if (isPlaying && !audioPlayer.seeking) {
+    setPlayState(false);
+  }
+  updateMediaSessionPosition();
+});
+
+// Screen lock & background sync
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    if (isPlaying && audioPlayer.paused) {
+      audioPlayer.play().catch(() => {});
+    }
+    setPlayState(!audioPlayer.paused);
+  }
+});
+
+// --- Continuous Seamless Loop (Hardware + Software) ---
 audioPlayer.addEventListener('ended', () => {
   if (playlist.length === 0) return;
 
-  if (loopMode === 'single') {
-    // Loop only this track
+  if (loopMode === 'single' || playlist.length === 1) {
+    // Loop only this track (fallback if native loop did not catch)
     audioPlayer.currentTime = 0;
-    audioPlayer.play().catch(e => console.error("Erro no loop single:", e));
+    audioPlayer.play().catch(e => console.warn("Fallback loop single:", e));
   } else {
     // Loop whole playlist (Track 1 -> 2 -> 3 -> 1...)
     const nextIdx = (currentIndex + 1) % playlist.length;
@@ -275,9 +335,12 @@ audioPlayer.addEventListener('timeupdate', () => {
   const total = audioPlayer.duration;
   const pct = (current / total) * 100;
 
-  progressBarFill.style.width = `${pct}%`;
-  progressThumb.style.left = `${pct}%`;
-  currentTimeDisplay.textContent = formatTime(current);
+  if (!isScrubbing) {
+    progressBarFill.style.width = `${pct}%`;
+    progressThumb.style.left = `${pct}%`;
+    currentTimeDisplay.textContent = formatTime(current);
+  }
+  updateMediaSessionPosition();
 });
 
 audioPlayer.addEventListener('loadedmetadata', () => {
@@ -361,17 +424,18 @@ btnPrev.addEventListener('click', playPrevTrack);
 
 // --- Loop Mode Toggle ---
 btnLoopMode.addEventListener('click', () => {
-  if (loopMode === 'playlist') {
-    loopMode = 'single';
-    loopIcon.textContent = '🔂';
-    loopText.textContent = 'Loop 1 Música';
-  } else {
+  if (loopMode === 'single') {
     loopMode = 'playlist';
     loopIcon.textContent = '🔁';
-    loopText.textContent = 'Loop Playlist';
+    loopText.textContent = 'LOOP PLAYLIST';
+  } else {
+    loopMode = 'single';
+    loopIcon.textContent = '🔂';
+    loopText.textContent = 'LOOP FAIXA';
   }
+  audioPlayer.loop = (loopMode === 'single' || playlist.length === 1);
   if (isPlaying) {
-    statusBadge.textContent = loopMode === 'playlist' ? 'Loop Playlist 🔁' : 'Loop Faixa 🔂';
+    statusBadge.textContent = (loopMode === 'single' || playlist.length === 1) ? 'Loop Faixa 🔂' : 'Loop Playlist 🔁';
   }
 });
 
@@ -758,7 +822,10 @@ function initAmbientCanvas() {
   requestAnimationFrame(animate);
 }
 
-// --- Web Audio API: Sincronização Cimática em Tempo Real ---
+// --- Web Audio API: Sincronização Cimática & Proteção de Áudio em Segundo Plano ---
+const isMobileOrIOS = /iPad|iPhone|iPod|Android/i.test(navigator.userAgent) || 
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
 let audioCtx = null;
 let analyser = null;
 let audioSource = null;
@@ -766,6 +833,17 @@ let dataArray = null;
 let isAudioContextReady = false;
 
 function ensureAudioContext() {
+  // ARQUITETURA CRÍTICA PARA IOS SAFARI / BLOQUEIO DE TELA:
+  // No iOS Safari, chamar createMediaElementSource(audioPlayer) desconecta o áudio do hardware nativo
+  // e o envia para o grafo do Web Audio. Quando o celular bloqueia a tela, o iOS suspende o Web Audio
+  // e silencia completamente qualquer saída de áudio!
+  // Deixando o audioPlayer como elemento nativo HTML5 puro no celular, o AVPlayer do iOS assume
+  // diretamente o hardware CoreAudio, tocando 100% contínuo, ininterrupto e sem falhas com a tela bloqueada 24h!
+  if (isMobileOrIOS) {
+    isAudioContextReady = true;
+    return;
+  }
+
   if (isAudioContextReady) {
     if (audioCtx && audioCtx.state === 'suspended') {
       audioCtx.resume().catch(() => {});
