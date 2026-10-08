@@ -442,8 +442,18 @@ body {
   justify-content: center;
   box-shadow: 0 0 30px rgba(255, 0, 60, 0.6), inset 0 0 20px rgba(255, 0, 60, 0.4);
   overflow: hidden;
-  cursor: default;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
   z-index: 3;
+}
+
+.artwork-disc:active {
+  transform: scale(0.94);
+  box-shadow: 0 0 45px rgba(255, 0, 60, 0.9), inset 0 0 25px rgba(255, 0, 60, 0.6);
 }
 
 .cyber-scanline {
@@ -688,6 +698,9 @@ body {
   color: #ffffff;
   border: 1px solid #ff4d6d;
   box-shadow: 0 0 20px rgba(255, 0, 60, 0.65), inset 0 0 10px rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .play-btn svg {
@@ -1041,6 +1054,17 @@ body {
   background: rgba(255, 0, 60, 0.35);
   box-shadow: 0 0 25px var(--neon-blood);
   transform: scale(0.96);
+}
+
+.btn-demo-secondary {
+  border-color: #ff2a55;
+  background: rgba(255, 0, 60, 0.12);
+  margin-top: 4px;
+  margin-bottom: 12px;
+}
+
+.btn-demo-secondary:active {
+  background: rgba(255, 0, 60, 0.4);
 }
 
 .empty-subdesc {

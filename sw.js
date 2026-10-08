@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pendragon-system-v4';
+const CACHE_NAME = 'pendragon-system-v5';
 const ASSETS = [
   './',
   './index.html',
@@ -41,6 +41,27 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   if (!event.request.url.startsWith(self.location.origin)) return;
 
+  const url = new URL(event.request.url);
+
+  // Network-First para arquivos de código (HTML, JS, CSS) para garantir atualizações imediatas no celular
+  if (url.pathname.endsWith('.html') || url.pathname.endsWith('.js') || url.pathname.endsWith('.css') || url.pathname.endsWith('/')) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response && response.status === 200) {
+            const responseToCache = response.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(event.request, responseToCache);
+            });
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // Cache-First para arquivos pesados e estáticos (áudio, imagens, fontes)
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       if (cachedResponse) {
@@ -59,3 +80,4 @@ self.addEventListener('fetch', (event) => {
     })
   );
 });
+

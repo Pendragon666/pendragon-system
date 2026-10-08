@@ -38,19 +38,28 @@ async function dbGetAllTracks() {
   });
 }
 
+// --- Audio MIME Normalization: Compatibilidade Nativa Total com iOS Safari & AVPlayer ---
+function normalizeAudioMime(mime, filename = '') {
+  const ext = (filename.split('.').pop() || '').toLowerCase();
+  if (ext === 'mp3') return 'audio/mpeg';
+  if (ext === 'wav') return 'audio/wav';
+  if (ext === 'm4a') return 'audio/mp4';
+  if (ext === 'aac') return 'audio/aac';
+  if (ext === 'ogg') return 'audio/ogg';
+  if (ext === 'flac') return 'audio/flac';
+
+  const m = (mime || '').toLowerCase().trim();
+  if (m === 'audio/mp3' || m === 'audio/x-mp3' || m === 'audio/mpg' || m === 'audio/mpeg3') return 'audio/mpeg';
+  if (m === 'audio/x-wav' || m === 'audio/wave' || m === 'audio/vnd.wav') return 'audio/wav';
+  if (m === 'audio/x-m4a' || m === 'audio/m4a') return 'audio/mp4';
+  if (m.startsWith('audio/')) return m;
+
+  return 'audio/mpeg';
+}
+
 // --- Helper: Converte arquivo para ArrayBuffer com detecção segura de MIME type ---
 async function readFileData(file) {
-  let mime = file.type || '';
-  if (!mime || mime === 'application/octet-stream') {
-    const ext = file.name.split('.').pop().toLowerCase();
-    if (ext === 'mp3') mime = 'audio/mpeg';
-    else if (ext === 'wav') mime = 'audio/wav';
-    else if (ext === 'm4a') mime = 'audio/mp4';
-    else if (ext === 'aac') mime = 'audio/aac';
-    else if (ext === 'ogg') mime = 'audio/ogg';
-    else if (ext === 'flac') mime = 'audio/flac';
-    else mime = 'audio/mpeg';
-  }
+  const mime = normalizeAudioMime(file.type, file.name);
 
   let buffer;
   if (file.arrayBuffer) {
@@ -73,18 +82,35 @@ async function readFileData(file) {
   };
 }
 
-// Converte qualquer objeto de faixa (ArrayBuffer, Blob ou legado) em Blob reproduzível
+// Converte qualquer objeto de faixa (ArrayBuffer, Blob ou legado) em Blob reproduzível e validado
 function getTrackBlob(track) {
   if (!track) return null;
-  if (track.blob instanceof Blob) {
+  const mime = normalizeAudioMime(track.type, track.name);
+
+  // 1. ArrayBuffer puro ou TypedArray (100% seguro em memória)
+  if (track.buffer) {
+    if (track.buffer instanceof ArrayBuffer && track.buffer.byteLength > 0) {
+      return new Blob([track.buffer], { type: mime });
+    }
+    if (ArrayBuffer.isView(track.buffer) && track.buffer.byteLength > 0) {
+      return new Blob([track.buffer.buffer], { type: mime });
+    }
+    if (track.buffer.length !== undefined && track.buffer.length > 0) {
+      try {
+        const u8 = new Uint8Array(track.buffer);
+        return new Blob([u8], { type: mime });
+      } catch (e) {}
+    }
+  }
+
+  // 2. Blob / File legado com verificação de integridade
+  if (track.blob instanceof Blob && track.blob.size > 0) {
+    if (!track.blob.type || track.blob.type === '' || track.blob.type === 'audio/mp3') {
+      return new Blob([track.blob], { type: mime });
+    }
     return track.blob;
   }
-  if (track.buffer instanceof ArrayBuffer) {
-    return new Blob([track.buffer], { type: track.type || 'audio/mpeg' });
-  }
-  if (track.blob) {
-    return new Blob([track.blob], { type: track.type || 'audio/mpeg' });
-  }
+
   return null;
 }
 
@@ -206,23 +232,38 @@ function cleanFileName(filename) {
   return filename.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
 }
 
-// --- Load Track & Playback ---
+// --- Load Track & Playback: Sem audioPlayer.load() para evitar AbortError no Safari iOS ---
 function loadTrack(index, autoPlay = false) {
-  if (index < 0 || index >= playlist.length) return;
+  if (index < 0 || index >= playlist.length) return false;
 
-  currentIndex = index;
-  const track = playlist[currentIndex];
+  const track = playlist[index];
+  const trackBlob = getTrackBlob(track);
 
-  // Clean old URL
-  if (currentBlobUrl) {
-    URL.revokeObjectURL(currentBlobUrl);
+  if (!trackBlob || trackBlob.size === 0) {
+    console.warn("Faixa inacessível ou corrompida no dispositivo:", track);
+    playlist.splice(index, 1);
+    if (track.id && !track.isMemoryOnly) {
+      dbDeleteTrack(track.id).catch(() => {});
+    }
+    renderPlaylistUI();
+    if (playlist.length > 0) {
+      return loadTrack(Math.min(index, playlist.length - 1), autoPlay);
+    } else {
+      currentIndex = -1;
+      emptyState.classList.remove('hidden');
+      trackTitle.textContent = 'NENHUM RITUAL CARREGADO';
+      trackMeta.textContent = '// SELECIONE SEUS ÁUDIOS ABAIXO';
+      trackIndexBadge.textContent = 'FAIXA [ 0 / 0 ]';
+      statusBadge.textContent = '// PRONTO PARA INICIAR 🩸';
+      return false;
+    }
   }
 
-  // Safe audio blob resolution from ArrayBuffer, memory Blob or legacy Blob
-  const trackBlob = getTrackBlob(track);
-  if (!trackBlob) {
-    console.error("Falha ao resolver blob de áudio da faixa:", track);
-    return;
+  currentIndex = index;
+
+  // Clean old URL safely
+  if (currentBlobUrl) {
+    try { URL.revokeObjectURL(currentBlobUrl); } catch (e) {}
   }
 
   currentBlobUrl = URL.createObjectURL(trackBlob);
@@ -231,14 +272,15 @@ function loadTrack(index, autoPlay = false) {
 
   // Crucial iOS hardware loop: AVPlayer handles single track repetition in CoreAudio without JS
   audioPlayer.loop = (loopMode === 'single' || playlist.length === 1);
-  audioPlayer.load();
 
   // UI Updates
   const cleanName = cleanFileName(track.name);
   trackTitle.textContent = cleanName;
-  trackMeta.textContent = formatFileSize(track.size);
+  trackMeta.textContent = formatFileSize(track.size || trackBlob.size);
   trackIndexBadge.textContent = `Faixa ${currentIndex + 1} de ${playlist.length}`;
-  statusBadge.textContent = isPlaying ? (audioPlayer.loop ? 'Loop Faixa 🔂' : 'Loop Playlist 🔁') : 'Pronto para tocar';
+  statusBadge.textContent = isPlaying ? 
+    (audioPlayer.loop ? 'Loop Faixa 🔂' : 'Loop Playlist 🔁') : 
+    'Pronto para tocar ⏵';
 
   renderPlaylistUI();
 
@@ -246,13 +288,19 @@ function loadTrack(index, autoPlay = false) {
   updateMediaSession(cleanName);
 
   if (autoPlay) {
-    audioPlayer.play().then(() => {
-      setPlayState(true);
-    }).catch(err => {
-      console.warn("Autoplay bloqueado pelo iOS:", err);
-      setPlayState(false);
-    });
+    const playPromise = audioPlayer.play();
+    if (playPromise !== undefined) {
+      playPromise.then(() => {
+        setPlayState(true);
+      }).catch(err => {
+        console.warn("Autoplay bloqueado pelo iOS/Navegador:", err);
+        setPlayState(false);
+        statusBadge.textContent = 'Toque no Play para iniciar ⏵';
+      });
+    }
   }
+
+  return true;
 }
 
 function setPlayState(playing) {
@@ -360,6 +408,18 @@ audioPlayer.addEventListener('pause', () => {
   updateMediaSessionPosition();
 });
 
+// Recuperação automática de erro do elemento de áudio no iOS Safari
+audioPlayer.addEventListener('error', (e) => {
+  const err = audioPlayer.error;
+  console.warn("Audio element error detectado:", err);
+  if (err && currentIndex >= 0 && currentIndex < playlist.length) {
+    statusBadge.textContent = 'Reconectando áudio ⏵';
+    setTimeout(() => {
+      loadTrack(currentIndex, isPlaying);
+    }, 400);
+  }
+});
+
 // Screen lock & background sync
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
@@ -433,8 +493,8 @@ window.addEventListener('touchmove', (e) => {
 }, { passive: true });
 window.addEventListener('touchend', () => { isScrubbing = false; });
 
-// --- Play / Pause Controls ---
-btnPlayPause.addEventListener('click', () => {
+// --- Play / Pause & Hardware Gesture Audio Triggers ---
+function togglePlayPause() {
   ensureAudioContext();
 
   if (playlist.length === 0) {
@@ -442,30 +502,89 @@ btnPlayPause.addEventListener('click', () => {
     return;
   }
 
-  if (currentIndex === -1) {
-    loadTrack(0, true);
-    return;
+  // Se nenhuma faixa selecionada ou índice fora dos limites, posiciona na primeira
+  if (currentIndex < 0 || currentIndex >= playlist.length) {
+    currentIndex = 0;
+  }
+
+  // Se audioPlayer não tiver src ou src estiver vazio ou com erro, recarrega a faixa
+  if (!audioPlayer.src || audioPlayer.src === '' || audioPlayer.error) {
+    loadTrack(currentIndex, false);
   }
 
   if (audioPlayer.paused) {
-    audioPlayer.play().then(() => {
-      setPlayState(true);
-    }).catch(err => {
-      console.error("Erro ao dar play:", err);
-    });
+    audioPlayer.volume = 1.0;
+    audioPlayer.loop = (loopMode === 'single' || playlist.length === 1);
+
+    const playPromise = audioPlayer.play();
+    if (playPromise !== undefined) {
+      playPromise.then(() => {
+        setPlayState(true);
+      }).catch(err => {
+        console.warn("Falha inicial ao reproduzir áudio:", err);
+
+        // Recuperação inteligente para iOS Safari:
+        // Se a URL do Blob expirou ou o player desincronizou, recria a URL imediatamente e tenta de novo
+        const track = playlist[currentIndex];
+        const freshBlob = getTrackBlob(track);
+        if (freshBlob && freshBlob.size > 0) {
+          if (currentBlobUrl) {
+            try { URL.revokeObjectURL(currentBlobUrl); } catch (e) {}
+          }
+          currentBlobUrl = URL.createObjectURL(freshBlob);
+          audioPlayer.src = currentBlobUrl;
+          audioPlayer.play().then(() => {
+            setPlayState(true);
+          }).catch(retryErr => {
+            console.error("Tentativa secundária falhou:", retryErr);
+            statusBadge.textContent = 'Toque no Play novamente ⏵';
+            setPlayState(false);
+          });
+        } else {
+          statusBadge.textContent = 'Toque no Play para iniciar ⏵';
+          setPlayState(false);
+        }
+      });
+    }
   } else {
     audioPlayer.pause();
     setPlayState(false);
   }
-});
+}
 
-function playNextTrack() {
+function handlePlayTrigger(e) {
+  if (e) {
+    e.preventDefault();
+  }
+  togglePlayPause();
+}
+
+// Botão Play/Pause principal (Click + Touch)
+btnPlayPause.addEventListener('click', handlePlayTrigger);
+btnPlayPause.addEventListener('touchend', handlePlayTrigger);
+
+// Toque direto no Disco Central (Animação Vampírica)
+if (visualizerDisc) {
+  visualizerDisc.addEventListener('click', handlePlayTrigger);
+  visualizerDisc.addEventListener('touchend', handlePlayTrigger);
+}
+
+// Toque na área do Vórtice / Turbilhão
+const turbilhaoRotatorEl = document.getElementById('turbilhaoRotator');
+if (turbilhaoRotatorEl) {
+  turbilhaoRotatorEl.addEventListener('click', handlePlayTrigger);
+  turbilhaoRotatorEl.addEventListener('touchend', handlePlayTrigger);
+}
+
+function playNextTrack(e) {
+  if (e) e.preventDefault();
   if (playlist.length === 0) return;
   const nextIdx = (currentIndex + 1) % playlist.length;
   loadTrack(nextIdx, true);
 }
 
-function playPrevTrack() {
+function playPrevTrack(e) {
+  if (e) e.preventDefault();
   if (playlist.length === 0) return;
   // If track played > 3 seconds, restart current track
   if (audioPlayer.currentTime > 3) {
@@ -477,7 +596,9 @@ function playPrevTrack() {
 }
 
 btnNext.addEventListener('click', playNextTrack);
+btnNext.addEventListener('touchend', playNextTrack);
 btnPrev.addEventListener('click', playPrevTrack);
+btnPrev.addEventListener('touchend', playPrevTrack);
 
 // --- Loop Mode Toggle ---
 btnLoopMode.addEventListener('click', () => {
@@ -571,11 +692,56 @@ infoModal.addEventListener('click', (e) => {
   if (e.target === infoModal) infoModal.classList.remove('active');
 });
 
+// --- Higienização e Migração de Faixas: Elimina Registros Corrompidos do Safari WebKit ---
+async function migrateAndCleanTracks(dbTracks) {
+  const validTracks = [];
+  for (const track of dbTracks) {
+    // 1. Já possui ArrayBuffer válido com bytes
+    if (track.buffer && (track.buffer instanceof ArrayBuffer || track.buffer.byteLength > 0)) {
+      validTracks.push(track);
+      continue;
+    }
+
+    // 2. Faixa legada com Blob: resgata bytes se ainda válidos
+    if (track.blob instanceof Blob && track.blob.size > 0) {
+      try {
+        const buf = await track.blob.arrayBuffer();
+        if (buf && buf.byteLength > 0) {
+          track.buffer = buf;
+          const db = await openDatabase();
+          const tx = db.transaction(STORE_NAME, 'readwrite');
+          tx.objectStore(STORE_NAME).put({
+            id: track.id,
+            name: track.name,
+            size: track.size || buf.byteLength,
+            type: normalizeAudioMime(track.type, track.name),
+            buffer: buf,
+            order: track.order || 1,
+            addedAt: track.addedAt || Date.now()
+          });
+          validTracks.push(track);
+          continue;
+        }
+      } catch (err) {
+        console.warn("Falha ao recuperar faixa antiga do IndexedDB:", track.name, err);
+      }
+    }
+
+    // 3. Faixa corrompida (0 bytes ou handle destruído pelo WebKit IDB bug): purga do IndexedDB
+    console.warn("Removendo registro corrompido do IndexedDB:", track.name);
+    try {
+      await dbDeleteTrack(track.id);
+    } catch (e) {}
+  }
+  return validTracks;
+}
+
 // --- Playlist Management & UI ---
 async function refreshPlaylist() {
   let dbTracks = [];
   try {
-    dbTracks = await dbGetAllTracks();
+    const rawTracks = await dbGetAllTracks();
+    dbTracks = await migrateAndCleanTracks(rawTracks);
   } catch (e) {
     console.warn("IndexedDB indisponível ou restrito:", e);
   }
@@ -586,15 +752,14 @@ async function refreshPlaylist() {
 
   if (playlist.length === 0) {
     emptyState.classList.remove('hidden');
-    trackTitle.textContent = 'Nenhum áudio carregado';
-    trackMeta.textContent = 'Adicione suas músicas abaixo';
-    trackIndexBadge.textContent = 'Faixa 0 de 0';
+    trackTitle.textContent = 'NENHUM RITUAL CARREGADO';
+    trackMeta.textContent = '// SELECIONE SEUS ÁUDIOS ABAIXO';
+    trackIndexBadge.textContent = 'FAIXA [ 0 / 0 ]';
+    statusBadge.textContent = '// PRONTO PARA INICIAR 🩸';
     currentIndex = -1;
   } else {
     emptyState.classList.add('hidden');
-    if (currentIndex === -1) {
-      loadTrack(0, false);
-    } else if (currentIndex >= playlist.length) {
+    if (currentIndex === -1 || currentIndex >= playlist.length) {
       loadTrack(0, false);
     }
   }
@@ -752,11 +917,13 @@ fileInput.addEventListener('change', async (e) => {
     }
 
     await refreshPlaylist();
-    statusBadge.textContent = idbSuccess ? 'Áudio pronto!' : 'Áudio pronto (Sessão)!';
-
-    // Se o player estiver pausado ou sem faixa tocando, inicia a nova faixa imediatamente em loop!
-    if (!isPlaying && playlist.length > 0) {
-      loadTrack(initialPlaylistLength, true);
+    if (playlist.length > 0) {
+      loadTrack(initialPlaylistLength, false);
+      statusBadge.textContent = 'Toque no Play para iniciar ⏵';
+      // Tenta iniciar a reprodução imediatamente
+      audioPlayer.play().then(() => setPlayState(true)).catch(() => {
+        statusBadge.textContent = 'Toque no Play para iniciar ⏵';
+      });
     }
   } catch (err) {
     console.error("Erro ao processar áudios:", err);
@@ -766,22 +933,26 @@ fileInput.addEventListener('change', async (e) => {
         id: 'mem_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
         name: file.name,
         size: file.size,
-        type: file.type || 'audio/mpeg',
+        type: normalizeAudioMime(file.type, file.name),
         blob: file,
         isMemoryOnly: true,
         addedAt: Date.now()
       });
     }
     await refreshPlaylist();
-    if (!isPlaying && playlist.length > 0) {
-      loadTrack(initialPlaylistLength, true);
+    if (playlist.length > 0) {
+      loadTrack(initialPlaylistLength, false);
+      statusBadge.textContent = 'Toque no Play para iniciar ⏵';
+      audioPlayer.play().then(() => setPlayState(true)).catch(() => {
+        statusBadge.textContent = 'Toque no Play para iniciar ⏵';
+      });
     }
   } finally {
     fileInput.value = '';
   }
 });
 
-// --- PWA Service Worker Registration ---
+// --- PWA Service Worker Registration & Live Cloud Sync ---
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js').then(reg => {
@@ -791,59 +962,144 @@ if ('serviceWorker' in navigator) {
       console.log('Falha ao registrar Service Worker:', err);
     });
   });
+
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    // Nova versão do PWA ativa na nuvem: atualiza a página para sincronia total
+    window.location.reload();
+  });
 }
 
-// Botão de carregar áudios de demonstração (Trilogia Vampírica)
+// Botão de carregar Frequência Instantânea 528Hz (1.4MB, ultrarrápido)
+const btnLoadFreq528 = document.getElementById('btnLoadFreq528');
+if (btnLoadFreq528) {
+  btnLoadFreq528.addEventListener('click', async () => {
+    btnLoadFreq528.disabled = true;
+    btnLoadFreq528.textContent = 'Sintonizando 528Hz...';
+    try {
+      const res = await fetch('Frequencia_528Hz_Regeneracao.wav');
+      if (!res.ok) throw new Error('Falha ao carregar áudio 528Hz');
+      const arrayBuf = await res.arrayBuffer();
+      const item = {
+        name: 'Frequência 528Hz Regeneração Celular.wav',
+        size: arrayBuf.byteLength,
+        type: 'audio/wav',
+        buffer: arrayBuf,
+        addedAt: Date.now()
+      };
+      try {
+        await dbAddTracks([item]);
+      } catch (err) {
+        memorySessionTracks.push({
+          id: 'mem_' + Date.now(),
+          name: item.name,
+          size: item.size,
+          type: item.type,
+          blob: new Blob([item.buffer], { type: item.type }),
+          isMemoryOnly: true,
+          addedAt: Date.now()
+        });
+      }
+      await refreshPlaylist();
+      if (playlist.length > 0) {
+        loadTrack(0, false);
+        togglePlayPause();
+      }
+    } catch (e) {
+      console.error('Erro ao carregar 528Hz:', e);
+      statusBadge.textContent = 'Erro ao carregar frequência';
+    } finally {
+      btnLoadFreq528.disabled = false;
+      btnLoadFreq528.textContent = '⚡ ATIVAR FREQUÊNCIA 528Hz: REGENERAÇÃO SUPREMA [INSTANTÂNEO]';
+    }
+  });
+}
+
+// Botão de carregar áudios de demonstração (Trilogia Vampírica com Carregamento Progressivo)
 const btnLoadDemo = document.getElementById('btnLoadDemo');
 if (btnLoadDemo) {
   btnLoadDemo.addEventListener('click', async () => {
     btnLoadDemo.disabled = true;
-    btnLoadDemo.textContent = 'Invocando rituais de áudio...';
+    btnLoadDemo.textContent = 'Invocando Vlad [Faixa 1/3]...';
     try {
       const demoFiles = [
         { url: 'playlist/VLAD%20THE%20IMPALER%20100X.wav', name: 'VLAD THE IMPALER 100X.wav' },
         { url: 'playlist/VAMPYRiC%20G%C3%98D%20V2%201000X%20~%20CALM.wav', name: 'VAMPYRiC GØD V2 1000X ~ CALM.wav' },
         { url: 'playlist/VAMPYRiC%20PUNK%20V2%201000X%20~%20CALM.wav', name: 'VAMPYRiC PUNK V2 1000X ~ CALM.wav' }
       ];
-      const items = [];
-      for (const item of demoFiles) {
-        const res = await fetch(item.url);
-        if (!res.ok) throw new Error(`Falha ao buscar ${item.url}`);
-        const arrayBuf = await res.arrayBuffer();
-        items.push({
-          name: item.name,
-          size: arrayBuf.byteLength,
-          type: 'audio/wav',
-          buffer: arrayBuf,
+
+      // 1. Carrega e ativa a primeira faixa imediatamente!
+      const first = demoFiles[0];
+      const res1 = await fetch(first.url);
+      if (!res1.ok) throw new Error(`Falha ao buscar ${first.url}`);
+      const buf1 = await res1.arrayBuffer();
+      const item1 = {
+        name: first.name,
+        size: buf1.byteLength,
+        type: 'audio/wav',
+        buffer: buf1,
+        addedAt: Date.now()
+      };
+
+      try {
+        await dbAddTracks([item1]);
+      } catch (err) {
+        memorySessionTracks.push({
+          id: 'mem_' + Date.now(),
+          name: item1.name,
+          size: item1.size,
+          type: item1.type,
+          blob: new Blob([item1.buffer], { type: item1.type }),
+          isMemoryOnly: true,
           addedAt: Date.now()
         });
       }
-      try {
-        await dbAddTracks(items);
-      } catch (err) {
-        console.warn("Salvando trilogia na memória da sessão:", err);
-        for (const it of items) {
-          memorySessionTracks.push({
-            id: 'mem_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
-            name: it.name,
-            size: it.size,
-            type: it.type,
-            blob: new Blob([it.buffer], { type: it.type }),
-            isMemoryOnly: true,
-            addedAt: Date.now()
-          });
-        }
-      }
+
       await refreshPlaylist();
       if (playlist.length > 0) {
-        loadTrack(0, true);
+        loadTrack(0, false);
+        togglePlayPause();
+      }
+
+      // 2. Baixa as faixas 2 e 3 em segundo plano sem travar a reprodução
+      btnLoadDemo.textContent = 'Baixando faixas restantes...';
+      for (let i = 1; i < demoFiles.length; i++) {
+        const item = demoFiles[i];
+        try {
+          const res = await fetch(item.url);
+          if (res.ok) {
+            const buf = await res.arrayBuffer();
+            const trackItem = {
+              name: item.name,
+              size: buf.byteLength,
+              type: 'audio/wav',
+              buffer: buf,
+              addedAt: Date.now()
+            };
+            try {
+              await dbAddTracks([trackItem]);
+            } catch (e) {
+              memorySessionTracks.push({
+                id: 'mem_' + Date.now() + '_' + i,
+                name: trackItem.name,
+                size: trackItem.size,
+                type: trackItem.type,
+                blob: new Blob([trackItem.buffer], { type: trackItem.type }),
+                isMemoryOnly: true,
+                addedAt: Date.now()
+              });
+            }
+            await refreshPlaylist();
+          }
+        } catch (e) {
+          console.warn("Erro ao carregar faixa adicional:", item.name, e);
+        }
       }
     } catch (e) {
       console.error('Erro ao carregar rituais:', e);
-      alert('Não foi possível carregar a trilogia automaticamente. Você pode adicioná-los pelo botão "INJETAR"!');
+      alert('Não foi possível carregar a trilogia completa no momento. Você pode adicionar seus próprios áudios pelo botão "INJETAR"!');
     } finally {
       btnLoadDemo.disabled = false;
-      btnLoadDemo.textContent = '🩸 Inserir Trilogia: Vlad, Vampyric God & Punk';
+      btnLoadDemo.textContent = '🩸 ATIVAR TRILOGIA: VLAD / GØD / PUNK [1000X]';
     }
   });
 }
@@ -1023,15 +1279,33 @@ function ensureAudioContext() {
   }
 }
 
-// User interaction unlock for iOS Safari
-['touchstart', 'touchend', 'click'].forEach(evt => {
-  document.addEventListener(evt, () => {
-    if (!isAudioContextReady && isPlaying) {
-      ensureAudioContext();
-    } else if (audioCtx && audioCtx.state === 'suspended') {
-      audioCtx.resume().catch(() => {});
+// Universal iOS Audio Pipeline Unlocker: Acorda o subsistema AVPlayer no primeiro toque do usuário
+let isAudioPipelineUnlocked = false;
+function unlockCoreAudioPipeline() {
+  if (isAudioPipelineUnlocked) return;
+  isAudioPipelineUnlocked = true;
+
+  try {
+    const silentAudio = new Audio();
+    // 48-byte RIFF/WAV de silêncio para aquecer o canal CoreAudio no iOS Safari
+    silentAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFRm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+    silentAudio.volume = 0.01;
+    const p = silentAudio.play();
+    if (p !== undefined) {
+      p.then(() => {
+        silentAudio.pause();
+        silentAudio.removeAttribute('src');
+      }).catch(() => {});
     }
-  }, { passive: true, once: false });
+  } catch (e) {}
+
+  if (audioCtx && audioCtx.state === 'suspended') {
+    audioCtx.resume().catch(() => {});
+  }
+}
+
+['touchstart', 'touchend', 'click'].forEach(evt => {
+  document.addEventListener(evt, unlockCoreAudioPipeline, { passive: true, once: true });
 });
 
 // Dynamic Audio Reactive Modulation
