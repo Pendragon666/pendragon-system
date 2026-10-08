@@ -38,29 +38,84 @@ async function dbGetAllTracks() {
   });
 }
 
-async function dbAddTracks(files) {
+// --- Helper: Converte arquivo para ArrayBuffer com detecção segura de MIME type ---
+async function readFileData(file) {
+  let mime = file.type || '';
+  if (!mime || mime === 'application/octet-stream') {
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (ext === 'mp3') mime = 'audio/mpeg';
+    else if (ext === 'wav') mime = 'audio/wav';
+    else if (ext === 'm4a') mime = 'audio/mp4';
+    else if (ext === 'aac') mime = 'audio/aac';
+    else if (ext === 'ogg') mime = 'audio/ogg';
+    else if (ext === 'flac') mime = 'audio/flac';
+    else mime = 'audio/mpeg';
+  }
+
+  let buffer;
+  if (file.arrayBuffer) {
+    buffer = await file.arrayBuffer();
+  } else {
+    buffer = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  return {
+    name: file.name,
+    size: file.size || buffer.byteLength,
+    type: mime,
+    buffer: buffer,
+    addedAt: Date.now()
+  };
+}
+
+// Converte qualquer objeto de faixa (ArrayBuffer, Blob ou legado) em Blob reproduzível
+function getTrackBlob(track) {
+  if (!track) return null;
+  if (track.blob instanceof Blob) {
+    return track.blob;
+  }
+  if (track.buffer instanceof ArrayBuffer) {
+    return new Blob([track.buffer], { type: track.type || 'audio/mpeg' });
+  }
+  if (track.blob) {
+    return new Blob([track.blob], { type: track.type || 'audio/mpeg' });
+  }
+  return null;
+}
+
+async function dbAddTracks(trackDataList) {
   const db = await openDatabase();
   const existing = await dbGetAllTracks();
   let maxOrder = existing.length > 0 ? Math.max(...existing.map(t => t.order || 0)) : 0;
 
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    const store = tx.objectStore(STORE_NAME);
+    try {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
 
-    for (const file of files) {
-      maxOrder++;
-      store.add({
-        name: file.name,
-        size: file.size,
-        type: file.type || 'audio/mp3',
-        blob: file,
-        order: maxOrder,
-        addedAt: Date.now()
-      });
+      for (const item of trackDataList) {
+        maxOrder++;
+        store.add({
+          name: item.name,
+          size: item.size,
+          type: item.type || 'audio/mpeg',
+          buffer: item.buffer, // ArrayBuffer puro: 100% serializável no iOS WebKit sem DataCloneError
+          order: maxOrder,
+          addedAt: item.addedAt || Date.now()
+        });
+      }
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Transação cancelada"));
+    } catch (err) {
+      reject(err);
     }
-
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
   });
 }
 
@@ -91,6 +146,7 @@ async function dbUpdateTrackOrder(items) {
 
 // --- Player State & DOM Elements ---
 let playlist = [];
+let memorySessionTracks = []; // Fallback em memória para iPhone/Safari Private Mode ou falha de quota
 let currentIndex = -1;
 let currentBlobUrl = null;
 let isPlaying = false;
@@ -162,10 +218,11 @@ function loadTrack(index, autoPlay = false) {
     URL.revokeObjectURL(currentBlobUrl);
   }
 
-  // Ensure valid audio MIME type for iOS Safari AVPlayer
-  let trackBlob = track.blob;
-  if (trackBlob && (!trackBlob.type || trackBlob.type === '')) {
-    trackBlob = new Blob([trackBlob], { type: track.type || 'audio/mpeg' });
+  // Safe audio blob resolution from ArrayBuffer, memory Blob or legacy Blob
+  const trackBlob = getTrackBlob(track);
+  if (!trackBlob) {
+    console.error("Falha ao resolver blob de áudio da faixa:", track);
+    return;
   }
 
   currentBlobUrl = URL.createObjectURL(trackBlob);
@@ -516,7 +573,15 @@ infoModal.addEventListener('click', (e) => {
 
 // --- Playlist Management & UI ---
 async function refreshPlaylist() {
-  playlist = await dbGetAllTracks();
+  let dbTracks = [];
+  try {
+    dbTracks = await dbGetAllTracks();
+  } catch (e) {
+    console.warn("IndexedDB indisponível ou restrito:", e);
+  }
+
+  // Combina faixas persistidas no IndexedDB com faixas da memória da sessão
+  playlist = [...dbTracks, ...memorySessionTracks];
   tracksCount.textContent = `${playlist.length} ${playlist.length === 1 ? 'áudio' : 'áudios'}`;
 
   if (playlist.length === 0) {
@@ -552,7 +617,7 @@ function renderPlaylistUI() {
         <div class="item-index-badge">${index + 1}</div>
         <div class="item-info">
           <div class="item-title">${cleanFileName(track.name)}</div>
-          <div class="item-sub">${formatFileSize(track.size)}</div>
+          <div class="item-sub">${formatFileSize(track.size)} ${track.isMemoryOnly ? '• Sessão' : ''}</div>
         </div>
       </div>
       <div class="item-actions">
@@ -588,7 +653,11 @@ function renderPlaylistUI() {
     itemEl.querySelector('.btn-delete').addEventListener('click', async (e) => {
       e.stopPropagation();
       const trackId = track.id;
-      await dbDeleteTrack(trackId);
+      if (track.isMemoryOnly || typeof trackId === 'string') {
+        memorySessionTracks = memorySessionTracks.filter(t => t.id !== trackId);
+      } else {
+        await dbDeleteTrack(trackId).catch(() => {});
+      }
       if (currentIndex === index) {
         audioPlayer.pause();
         setPlayState(false);
@@ -631,23 +700,82 @@ function renderPlaylistUI() {
   });
 }
 
-// File input selection
+// File input selection: Processamento de áudio com suporte total ao iOS Safari & Fallback em Memória
 fileInput.addEventListener('change', async (e) => {
   const files = Array.from(e.target.files);
   if (files.length === 0) return;
 
-  statusBadge.textContent = 'Salvando áudios...';
+  statusBadge.textContent = 'Carregando áudio...';
+  const initialPlaylistLength = playlist.length;
+
   try {
-    await dbAddTracks(files);
+    // 1. Converte arquivos em ArrayBuffers limpos (evita DataCloneError no iOS WebKit)
+    const processedTracks = [];
+    for (const file of files) {
+      try {
+        const item = await readFileData(file);
+        processedTracks.push(item);
+      } catch (readErr) {
+        console.warn("Leitura em ArrayBuffer falhou, mantendo arquivo bruto:", readErr);
+        processedTracks.push({
+          name: file.name,
+          size: file.size,
+          type: file.type || 'audio/mpeg',
+          blob: file,
+          addedAt: Date.now()
+        });
+      }
+    }
+
+    // 2. Tenta salvar no IndexedDB de forma segura
+    let idbSuccess = false;
+    try {
+      await dbAddTracks(processedTracks);
+      idbSuccess = true;
+    } catch (idbErr) {
+      console.warn("IndexedDB indisponível ou com restrição no Safari (Modo Anônimo/Quota), ativando modo memória:", idbErr);
+      // Fallback em memória para iPhone/Safari Private Mode ou restrição de quota
+      for (const trackItem of processedTracks) {
+        const trackBlob = trackItem.buffer ? 
+          new Blob([trackItem.buffer], { type: trackItem.type || 'audio/mpeg' }) : 
+          trackItem.blob;
+        memorySessionTracks.push({
+          id: 'mem_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+          name: trackItem.name,
+          size: trackItem.size,
+          type: trackItem.type || 'audio/mpeg',
+          blob: trackBlob,
+          isMemoryOnly: true,
+          addedAt: Date.now()
+        });
+      }
+    }
+
     await refreshPlaylist();
-    statusBadge.textContent = 'Áudios prontos!';
-    // If player was idle, start playing track 0
+    statusBadge.textContent = idbSuccess ? 'Áudio pronto!' : 'Áudio pronto (Sessão)!';
+
+    // Se o player estiver pausado ou sem faixa tocando, inicia a nova faixa imediatamente em loop!
     if (!isPlaying && playlist.length > 0) {
-      loadTrack(0, false);
+      loadTrack(initialPlaylistLength, true);
     }
   } catch (err) {
-    console.error("Erro ao salvar áudios:", err);
-    alert("Ocorreu um erro ao salvar o arquivo no dispositivo.");
+    console.error("Erro ao processar áudios:", err);
+    // Fallback de emergência absoluto: insere arquivos diretamente na memória
+    for (const file of files) {
+      memorySessionTracks.push({
+        id: 'mem_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+        name: file.name,
+        size: file.size,
+        type: file.type || 'audio/mpeg',
+        blob: file,
+        isMemoryOnly: true,
+        addedAt: Date.now()
+      });
+    }
+    await refreshPlaylist();
+    if (!isPlaying && playlist.length > 0) {
+      loadTrack(initialPlaylistLength, true);
+    }
   } finally {
     fileInput.value = '';
   }
@@ -657,7 +785,8 @@ fileInput.addEventListener('change', async (e) => {
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js').then(reg => {
-      console.log('Service Worker registrado com sucesso:', reg.scope);
+      console.log('Service Worker registrado:', reg.scope);
+      reg.update();
     }).catch(err => {
       console.log('Falha ao registrar Service Worker:', err);
     });
@@ -676,21 +805,42 @@ if (btnLoadDemo) {
         { url: 'playlist/VAMPYRiC%20G%C3%98D%20V2%201000X%20~%20CALM.wav', name: 'VAMPYRiC GØD V2 1000X ~ CALM.wav' },
         { url: 'playlist/VAMPYRiC%20PUNK%20V2%201000X%20~%20CALM.wav', name: 'VAMPYRiC PUNK V2 1000X ~ CALM.wav' }
       ];
-      const blobs = [];
+      const items = [];
       for (const item of demoFiles) {
         const res = await fetch(item.url);
         if (!res.ok) throw new Error(`Falha ao buscar ${item.url}`);
-        const blob = await res.blob();
-        blobs.push(new File([blob], item.name, { type: 'audio/wav' }));
+        const arrayBuf = await res.arrayBuffer();
+        items.push({
+          name: item.name,
+          size: arrayBuf.byteLength,
+          type: 'audio/wav',
+          buffer: arrayBuf,
+          addedAt: Date.now()
+        });
       }
-      await dbAddTracks(blobs);
+      try {
+        await dbAddTracks(items);
+      } catch (err) {
+        console.warn("Salvando trilogia na memória da sessão:", err);
+        for (const it of items) {
+          memorySessionTracks.push({
+            id: 'mem_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+            name: it.name,
+            size: it.size,
+            type: it.type,
+            blob: new Blob([it.buffer], { type: it.type }),
+            isMemoryOnly: true,
+            addedAt: Date.now()
+          });
+        }
+      }
       await refreshPlaylist();
       if (playlist.length > 0) {
         loadTrack(0, true);
       }
     } catch (e) {
       console.error('Erro ao carregar rituais:', e);
-      alert('Não foi possível carregar a trilogia automaticamente. Você pode adicioná-los pelo botão "+ Adicionar"!');
+      alert('Não foi possível carregar a trilogia automaticamente. Você pode adicioná-los pelo botão "INJETAR"!');
     } finally {
       btnLoadDemo.disabled = false;
       btnLoadDemo.textContent = '🩸 Inserir Trilogia: Vlad, Vampyric God & Punk';

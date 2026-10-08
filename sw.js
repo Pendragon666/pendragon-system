@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pendragon-system-v3';
+const CACHE_NAME = 'pendragon-system-v4';
 const ASSETS = [
   './',
   './index.html',
